@@ -61,7 +61,9 @@ class StockNewsTickerPlugin(BasePlugin):
         self.max_duration = self.global_config.get('max_duration', 300)
         self.max_headlines_per_symbol = self.global_config.get('max_headlines_per_symbol', 1)
         self.headlines_per_rotation = self.global_config.get('headlines_per_rotation', 2)
-        self.font_size = self.global_config.get('font_size', 10)
+        self.font_name = self.global_config.get('font', '10x20')
+        self.news_source = self.feeds_config.get('news_source', 'google_news')
+        self.market_feeds = self.feeds_config.get('market_feeds', {})
 
         # Colors
         self.text_color = tuple(self.feeds_config.get('text_color', [0, 255, 0]))
@@ -96,6 +98,38 @@ class StockNewsTickerPlugin(BasePlugin):
         self.logger.info(f"Tracking symbols: {stock_symbols}")
         self.logger.info(f"Custom feeds: {custom_feeds}")
 
+    # BDF font name → (filename, native pixel size).
+    # BDF fonts are fixed-size bitmaps — they must be loaded at their native size.
+    _BDF_FONT_MAP: Dict[str, tuple] = {
+        '10x20':  ('10x20.bdf',  20),
+        '9x18B':  ('9x18B.bdf',  18),
+        '9x18':   ('9x18.bdf',   18),
+        '9x15B':  ('9x15B.bdf',  15),
+        '9x15':   ('9x15.bdf',   15),
+        '8x13B':  ('8x13B.bdf',  13),
+        '8x13':   ('8x13.bdf',   13),
+        '7x14B':  ('7x14B.bdf',  14),
+        '7x14':   ('7x14.bdf',   14),
+        '7x13B':  ('7x13B.bdf',  13),
+        '7x13':   ('7x13.bdf',   13),
+        '6x13B':  ('6x13B.bdf',  13),
+        '6x12':   ('6x12.bdf',   12),
+        '6x10':   ('6x10.bdf',   10),
+    }
+
+    # Built-in RSS URL templates keyed by news_source config value.
+    _NEWS_SOURCE_URLS: Dict[str, str] = {
+        'yahoo': 'https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US',
+        'google_news': 'https://news.google.com/rss/search?q={symbol}+stock&hl=en-US&gl=US&ceid=US:en',
+        'seeking_alpha': 'https://seekingalpha.com/api/sa/combined/{symbol}.xml',
+    }
+
+    # Built-in general market feed URLs.
+    _MARKET_FEED_URLS: Dict[str, str] = {
+        'cnbc': 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114',
+        'marketwatch': 'https://feeds.marketwatch.com/marketwatch/topstories/',
+    }
+
     def _register_fonts(self):
         """Register fonts with the font manager."""
         try:
@@ -103,13 +137,16 @@ class StockNewsTickerPlugin(BasePlugin):
                 return
 
             font_manager = self.plugin_manager.font_manager
+            font_entry = self._BDF_FONT_MAP.get(self.font_name, ('10x20.bdf', 20))
+            family = font_entry[0].replace('.bdf', '')
+            size_px = font_entry[1]
 
             # Headline font
             font_manager.register_manager_font(
                 manager_id=self.plugin_id,
                 element_key=f"{self.plugin_id}.headline",
-                family="press_start",
-                size_px=self.font_size,
+                family=family,
+                size_px=size_px,
                 color=self.text_color
             )
 
@@ -117,8 +154,8 @@ class StockNewsTickerPlugin(BasePlugin):
             font_manager.register_manager_font(
                 manager_id=self.plugin_id,
                 element_key=f"{self.plugin_id}.symbol",
-                family="press_start",
-                size_px=self.font_size,
+                family=family,
+                size_px=size_px,
                 color=self.symbol_color
             )
 
@@ -126,8 +163,8 @@ class StockNewsTickerPlugin(BasePlugin):
             font_manager.register_manager_font(
                 manager_id=self.plugin_id,
                 element_key=f"{self.plugin_id}.separator",
-                family="press_start",
-                size_px=self.font_size,
+                family=family,
+                size_px=size_px,
                 color=self.separator_color
             )
 
@@ -135,8 +172,8 @@ class StockNewsTickerPlugin(BasePlugin):
             font_manager.register_manager_font(
                 manager_id=self.plugin_id,
                 element_key=f"{self.plugin_id}.info",
-                family="four_by_six",
-                size_px=6,
+                family="6x10",
+                size_px=10,
                 color=(150, 150, 150)
             )
 
@@ -162,6 +199,11 @@ class StockNewsTickerPlugin(BasePlugin):
                 if symbol_news:
                     self.all_news_items.extend(symbol_news)
 
+            # Fetch from built-in market feeds (CNBC, MarketWatch)
+            market_news = self._fetch_market_feeds()
+            if market_news:
+                self.all_news_items.extend(market_news)
+
             # Fetch from custom feeds
             custom_feeds = self.feeds_config.get('custom_feeds', {})
             for feed_name, feed_url in custom_feeds.items():
@@ -185,38 +227,139 @@ class StockNewsTickerPlugin(BasePlugin):
             self.logger.error(f"Error updating stock news: {e}")
 
     def _fetch_stock_news(self, symbol: str) -> List[Dict]:
-        """Fetch news for a specific stock symbol."""
-        cache_key = f"stock_news_{symbol}_{datetime.now().strftime('%Y%m%d%H')}"
-        update_interval = self.global_config.get('update_interval_seconds', 300)
+        """Fetch news for a stock symbol from the configured RSS source.
+
+        Routes to the appropriate RSS provider based on ``self.news_source``.
+        Results are cached per (source, symbol) to avoid redundant requests.
+
+        Args:
+            symbol: Ticker symbol (e.g. ``'NVDA'``).
+
+        Returns:
+            List of news-item dicts with ``symbol``, ``title``, ``source``, etc.
+        """
+        source = self.news_source
+        cache_key = f"stock_news_{source}_{symbol}_{datetime.now().strftime('%Y%m%d%H')}"
+        update_interval = self.global_config.get('update_interval', 300)
 
         # Check cache first
         cached_data = self.cache_manager.get(cache_key)
         if cached_data and (time.time() - self.last_update) < update_interval:
-            self.logger.debug(f"Using cached news for {symbol}")
+            self.logger.debug("Using cached %s news for %s", source, symbol)
             return cached_data
 
+        url_template = self._NEWS_SOURCE_URLS.get(source)
+        if not url_template:
+            self.logger.warning("Unknown news source '%s', falling back to google_news", source)
+            url_template = self._NEWS_SOURCE_URLS['google_news']
+            source = 'google_news'
+
+        feed_url = url_template.format(symbol=symbol)
+        source_label = {'yahoo': 'Yahoo Finance', 'google_news': 'Google News',
+                        'seeking_alpha': 'Seeking Alpha'}.get(source, source)
+
         try:
-            # For now, return placeholder data since actual stock news APIs would require API keys
-            # In a real implementation, this would call financial news APIs
-            placeholder_news = [
-                {
-                    'symbol': symbol,
-                    'title': f"{symbol} Reports Strong Quarterly Earnings",
-                    'summary': f"{symbol} announces better than expected results",
-                    'source': 'Financial News',
-                    'published': datetime.now().isoformat(),
-                    'url': f'https://example.com/news/{symbol}'
-                }
-            ]
+            self.logger.info("Fetching %s news for %s...", source_label, symbol)
+            headers = {'User-Agent': 'LEDMatrix-StockNewsPlugin/1.0 (RSS Reader)'}
+            response = requests.get(
+                feed_url,
+                timeout=self.background_config.get('request_timeout', 30),
+                headers=headers,
+            )
+            response.raise_for_status()
 
-            # Cache the results
-            self.cache_manager.set(cache_key, placeholder_news, ttl=update_interval * 2)
+            root = ET.fromstring(response.content)
+            news_items = []
 
-            return placeholder_news
+            for item in root.findall('.//item')[:self.max_headlines_per_symbol]:
+                title = item.find('title')
+                description = item.find('description')
+                pub_date = item.find('pubDate')
+                link = item.find('link')
 
+                if title is not None and title.text:
+                    news_items.append({
+                        'symbol': symbol,
+                        'title': self._clean_headline(html.unescape(title.text).strip()),
+                        'summary': (html.unescape(description.text).strip()
+                                    if description is not None and description.text else ''),
+                        'source': source_label,
+                        'published': pub_date.text if pub_date is not None else '',
+                        'url': link.text if link is not None else '',
+                    })
+
+            self.cache_manager.set(cache_key, news_items, ttl=update_interval * 2)
+            self.logger.debug("Fetched %d %s items for %s", len(news_items), source_label, symbol)
+            return news_items
+
+        except requests.RequestException as e:
+            self.logger.error("Error fetching %s news for %s: %s", source_label, symbol, e)
+        except ET.ParseError as e:
+            self.logger.error("Error parsing %s RSS for %s: %s", source_label, symbol, e)
         except Exception as e:
-            self.logger.error(f"Error fetching news for {symbol}: {e}")
-            return []
+            self.logger.error("Error processing %s news for %s: %s", source_label, symbol, e)
+
+        return []
+
+    def _fetch_market_feeds(self) -> List[Dict]:
+        """Fetch headlines from enabled built-in market feeds (CNBC, MarketWatch).
+
+        Returns:
+            List of news-item dicts from all enabled market feeds.
+        """
+        all_items: List[Dict] = []
+        for feed_key, feed_url in self._MARKET_FEED_URLS.items():
+            if not self.market_feeds.get(feed_key, False):
+                continue
+
+            feed_label = {'cnbc': 'CNBC', 'marketwatch': 'MarketWatch'}.get(feed_key, feed_key)
+            cache_key = f"market_feed_{feed_key}_{datetime.now().strftime('%Y%m%d%H')}"
+            update_interval = self.global_config.get('update_interval', 300)
+
+            cached = self.cache_manager.get(cache_key)
+            if cached and (time.time() - self.last_update) < update_interval:
+                all_items.extend(cached)
+                continue
+
+            try:
+                self.logger.info("Fetching %s market news...", feed_label)
+                headers = {'User-Agent': 'LEDMatrix-StockNewsPlugin/1.0 (RSS Reader)'}
+                response = requests.get(
+                    feed_url,
+                    timeout=self.background_config.get('request_timeout', 30),
+                    headers=headers,
+                )
+                response.raise_for_status()
+
+                root = ET.fromstring(response.content)
+                items: List[Dict] = []
+
+                for item in root.findall('.//item')[:self.headlines_per_rotation]:
+                    title = item.find('title')
+                    pub_date = item.find('pubDate')
+                    link = item.find('link')
+
+                    if title is not None and title.text:
+                        items.append({
+                            'feed_name': feed_label,
+                            'title': self._clean_headline(html.unescape(title.text).strip()),
+                            'source': feed_label,
+                            'published': pub_date.text if pub_date is not None else '',
+                            'url': link.text if link is not None else '',
+                        })
+
+                self.cache_manager.set(cache_key, items, ttl=update_interval * 2)
+                self.logger.debug("Fetched %d headlines from %s", len(items), feed_label)
+                all_items.extend(items)
+
+            except requests.RequestException as e:
+                self.logger.error("Error fetching %s feed: %s", feed_label, e)
+            except ET.ParseError as e:
+                self.logger.error("Error parsing %s feed: %s", feed_label, e)
+            except Exception as e:
+                self.logger.error("Error processing %s feed: %s", feed_label, e)
+
+        return all_items
 
     def _fetch_feed_headlines(self, feed_name: str, feed_url: str) -> List[Dict]:
         """Fetch headlines from a custom RSS feed."""
@@ -398,7 +541,8 @@ class StockNewsTickerPlugin(BasePlugin):
             'scroll_speed': self.scroll_speed,
             'max_headlines_per_symbol': self.max_headlines_per_symbol,
             'headlines_per_rotation': self.headlines_per_rotation,
-            'font_size': self.font_size,
+            'font': self.font_name,
+            'news_source': self.news_source,
             'text_color': self.text_color,
             'symbol_color': self.symbol_color,
             'separator_color': self.separator_color
