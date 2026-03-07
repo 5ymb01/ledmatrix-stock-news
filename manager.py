@@ -15,19 +15,17 @@ Features:
 API Version: 1.0.0
 """
 
-import logging
 import time
 import requests
 import xml.etree.ElementTree as ET
 import html
 import re
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
-from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, List
+from PIL import Image, ImageDraw
 
+from src.logging_config import get_logger
 from src.plugin_system.base_plugin import BasePlugin
-
-logger = logging.getLogger(__name__)
 
 
 class StockNewsTickerPlugin(BasePlugin):
@@ -86,6 +84,10 @@ class StockNewsTickerPlugin(BasePlugin):
         self.all_news_items = []
         self.current_rotation_index = 0
         self.initialized = True
+
+        # Derive font_size from the BDF font map (used for text layout)
+        font_entry = self._BDF_FONT_MAP.get(self.font_name, ('10x20.bdf', 20))
+        self.font_size = font_entry[1]
 
         # Register fonts
         self._register_fonts()
@@ -364,7 +366,7 @@ class StockNewsTickerPlugin(BasePlugin):
     def _fetch_feed_headlines(self, feed_name: str, feed_url: str) -> List[Dict]:
         """Fetch headlines from a custom RSS feed."""
         cache_key = f"stock_feed_{feed_name}_{datetime.now().strftime('%Y%m%d%H')}"
-        update_interval = self.global_config.get('update_interval_seconds', 300)
+        update_interval = self.global_config.get('update_interval', 300)
 
         # Check cache first
         cached_data = self.cache_manager.get(cache_key)
@@ -435,13 +437,12 @@ class StockNewsTickerPlugin(BasePlugin):
 
         return headline
 
-    def display(self, display_mode: str = None, force_clear: bool = False) -> None:
+    def display(self, force_clear: bool = False) -> None:
         """
         Display scrolling stock news headlines.
 
         Args:
-            display_mode: Should be 'stock_news_ticker'
-            force_clear: If True, clear display before rendering
+            force_clear: If True, clear display before rendering.
         """
         if not self.initialized:
             self._display_error("Stock news ticker plugin not initialized")
@@ -548,6 +549,52 @@ class StockNewsTickerPlugin(BasePlugin):
             'separator_color': self.separator_color
         })
         return info
+
+    def on_config_change(self, new_config: Dict[str, Any]) -> None:
+        """Reload instance variables when config is changed via the web UI.
+
+        Args:
+            new_config: The updated plugin configuration dict.
+        """
+        super().on_config_change(new_config)
+
+        self.feeds_config = new_config.get('feeds', {})
+        self.global_config = new_config.get('global', {})
+
+        # Display settings
+        self.display_duration = self.global_config.get('display_duration', 30)
+        self.scroll_speed = self.global_config.get('scroll_speed', 1)
+        self.scroll_delay = self.global_config.get('scroll_delay', 0.01)
+        self.dynamic_duration = self.global_config.get('dynamic_duration', True)
+        self.min_duration = self.global_config.get('min_duration', 30)
+        self.max_duration = self.global_config.get('max_duration', 300)
+        self.max_headlines_per_symbol = self.global_config.get('max_headlines_per_symbol', 1)
+        self.headlines_per_rotation = self.global_config.get('headlines_per_rotation', 2)
+        self.font_name = self.global_config.get('font', '10x20')
+        self.news_source = self.feeds_config.get('news_source', 'google_news')
+        self.market_feeds = self.feeds_config.get('market_feeds', {})
+
+        # Colors
+        self.text_color = tuple(self.feeds_config.get('text_color', [0, 255, 0]))
+        self.symbol_color = tuple(self.feeds_config.get('symbol_color', [255, 255, 0]))
+        self.separator_color = tuple(self.feeds_config.get('separator_color', [255, 0, 0]))
+
+        # Background service
+        self.background_config = self.global_config.get('background_service', {
+            'enabled': True,
+            'request_timeout': 30,
+            'max_retries': 5,
+            'priority': 2
+        })
+
+        # Recalculate font size
+        font_entry = self._BDF_FONT_MAP.get(self.font_name, ('10x20.bdf', 20))
+        self.font_size = font_entry[1]
+
+        # Re-register fonts with updated config
+        self._register_fonts()
+
+        self.logger.info("Stock news ticker config reloaded")
 
     def cleanup(self) -> None:
         """Cleanup resources."""
