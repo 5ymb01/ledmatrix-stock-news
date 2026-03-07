@@ -15,19 +15,17 @@ Features:
 API Version: 1.0.0
 """
 
-import logging
 import time
 import requests
 import xml.etree.ElementTree as ET
 import html
 import re
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
-from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, List
+from PIL import Image, ImageDraw
 
+from src.logging_config import get_logger
 from src.plugin_system.base_plugin import BasePlugin
-
-logger = logging.getLogger(__name__)
 
 
 class StockNewsTickerPlugin(BasePlugin):
@@ -187,7 +185,7 @@ class StockNewsTickerPlugin(BasePlugin):
     def _fetch_stock_news(self, symbol: str) -> List[Dict]:
         """Fetch news for a specific stock symbol."""
         cache_key = f"stock_news_{symbol}_{datetime.now().strftime('%Y%m%d%H')}"
-        update_interval = self.global_config.get('update_interval_seconds', 300)
+        update_interval = self.global_config.get('update_interval', 300)
 
         # Check cache first
         cached_data = self.cache_manager.get(cache_key)
@@ -221,7 +219,7 @@ class StockNewsTickerPlugin(BasePlugin):
     def _fetch_feed_headlines(self, feed_name: str, feed_url: str) -> List[Dict]:
         """Fetch headlines from a custom RSS feed."""
         cache_key = f"stock_feed_{feed_name}_{datetime.now().strftime('%Y%m%d%H')}"
-        update_interval = self.global_config.get('update_interval_seconds', 300)
+        update_interval = self.global_config.get('update_interval', 300)
 
         # Check cache first
         cached_data = self.cache_manager.get(cache_key)
@@ -292,12 +290,11 @@ class StockNewsTickerPlugin(BasePlugin):
 
         return headline
 
-    def display(self, display_mode: str = None, force_clear: bool = False) -> None:
+    def display(self, force_clear: bool = False) -> None:
         """
         Display scrolling stock news headlines.
 
         Args:
-            display_mode: Should be 'stock_news_ticker'
             force_clear: If True, clear display before rendering
         """
         if not self.initialized:
