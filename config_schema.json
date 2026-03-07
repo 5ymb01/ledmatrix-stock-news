@@ -111,26 +111,12 @@
           "default": false,
           "description": "Enable scroll performance metrics"
         },
-        "max_headlines_per_symbol": {
-          "type": "integer",
-          "default": 1,
-          "minimum": 1,
-          "maximum": 5,
-          "description": "Maximum headlines to show per stock symbol"
-        },
-        "headlines_per_rotation": {
-          "type": "integer",
-          "default": 2,
-          "minimum": 1,
-          "maximum": 10,
-          "description": "Number of headlines to show per rotation"
-        },
-        "font_size": {
-          "type": "integer",
-          "default": 10,
-          "minimum": 8,
-          "maximum": 16,
-          "description": "Font size for headlines"
+        "font": {
+          "type": "string",
+          "title": "Display Font",
+          "enum": ["10x20", "9x18B", "9x18", "9x15B", "9x15", "8x13B", "8x13", "7x14B", "7x14", "7x13B", "7x13", "6x13B", "6x12", "6x10"],
+          "default": "10x20",
+          "description": "Bitmap font for headlines. Larger fonts are more legible. Bold variants (B suffix) have thicker strokes. Number format is WIDTHxHEIGHT in pixels."
         },
         "background_service": {
           "type": "object",
@@ -170,6 +156,33 @@
     "feeds": {
       "type": "object",
       "properties": {
+        "news_source": {
+          "type": "string",
+          "title": "News Source",
+          "enum": ["yahoo", "google_news", "seeking_alpha"],
+          "default": "google_news",
+          "description": "RSS provider for per-symbol stock news. 'yahoo' = Yahoo Finance, 'google_news' = Google News (broadest coverage), 'seeking_alpha' = Seeking Alpha (analysis-focused)"
+        },
+        "market_feeds": {
+          "type": "object",
+          "title": "General Market Feeds",
+          "description": "Toggle built-in general market news feeds (not per-symbol)",
+          "properties": {
+            "cnbc": {
+              "type": "boolean",
+              "title": "CNBC Top News",
+              "description": "Include CNBC top business and market news",
+              "default": false
+            },
+            "marketwatch": {
+              "type": "boolean",
+              "title": "MarketWatch",
+              "description": "Include MarketWatch top stories",
+              "default": false
+            }
+          },
+          "additionalProperties": false
+        },
         "stock_symbols": {
           "type": "array",
           "items": {
