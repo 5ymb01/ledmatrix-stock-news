@@ -21,8 +21,8 @@ import xml.etree.ElementTree as ET
 import html
 import re
 from datetime import datetime
-from typing import Dict, Any, List
-from PIL import Image, ImageDraw
+from typing import Any, Dict, List, Optional, Tuple
+from PIL import Image, ImageDraw, ImageFont
 
 from src.logging_config import get_logger
 from src.plugin_system.base_plugin import BasePlugin
@@ -41,8 +41,39 @@ class StockNewsTickerPlugin(BasePlugin):
         background_service: Data fetching configuration
     """
 
+    # Type coercion helpers -------------------------------------------------
+
+    @staticmethod
+    def _to_int(value: Any, default: int) -> int:
+        """Coerce a config value to int, falling back to *default* on error."""
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _to_float(value: Any, default: float) -> float:
+        """Coerce a config value to float, falling back to *default* on error."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _to_color(value: Any, default: Tuple[int, ...]) -> Tuple[int, ...]:
+        """Coerce a config color value to an int tuple, falling back to *default*."""
+        try:
+            result = tuple(int(float(c)) for c in value)
+            if len(result) == 3:
+                return result
+        except (TypeError, ValueError, AttributeError):
+            pass
+        return default
+
+    # ------------------------------------------------------------------
+
     def __init__(self, plugin_id: str, config: Dict[str, Any],
-                 display_manager, cache_manager, plugin_manager):
+                 display_manager, cache_manager, plugin_manager) -> None:
         """Initialize the stock news ticker plugin."""
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
 
@@ -50,23 +81,33 @@ class StockNewsTickerPlugin(BasePlugin):
         self.feeds_config = config.get('feeds', {})
         self.global_config = config.get('global', {})
 
-        # Display settings
-        self.display_duration = self.global_config.get('display_duration', 30)
-        self.scroll_speed = self.global_config.get('scroll_speed', 1)
-        self.scroll_delay = self.global_config.get('scroll_delay', 0.01)
-        self.dynamic_duration = self.global_config.get('dynamic_duration', True)
-        self.min_duration = self.global_config.get('min_duration', 30)
-        self.max_duration = self.global_config.get('max_duration', 300)
-        self.max_headlines_per_symbol = self.global_config.get('max_headlines_per_symbol', 1)
-        self.headlines_per_rotation = self.global_config.get('headlines_per_rotation', 2)
+        # Display settings (type-coerced)
+        self.display_duration = self._to_float(self.global_config.get('display_duration', 30), 30)
+        self.scroll_speed = self._to_float(self.global_config.get('scroll_speed', 1), 1)
+        self.scroll_delay = self._to_float(self.global_config.get('scroll_delay', 0.01), 0.01)
+        self.dynamic_duration = bool(self.global_config.get('dynamic_duration', True))
+        self.min_duration = self._to_float(self.global_config.get('min_duration', 30), 30)
+        self.max_duration = self._to_float(self.global_config.get('max_duration', 300), 300)
+        self.max_headlines_per_symbol = self._to_int(
+            self.global_config.get('max_headlines_per_symbol', 1), 1
+        )
+        self.headlines_per_rotation = self._to_int(
+            self.global_config.get('headlines_per_rotation', 2), 2
+        )
         self.font_name = self.global_config.get('font', '10x20')
         self.news_source = self.feeds_config.get('news_source', 'google_news')
         self.market_feeds = self.feeds_config.get('market_feeds', {})
 
-        # Colors
-        self.text_color = tuple(self.feeds_config.get('text_color', [0, 255, 0]))
-        self.symbol_color = tuple(self.feeds_config.get('symbol_color', [255, 255, 0]))
-        self.separator_color = tuple(self.feeds_config.get('separator_color', [255, 0, 0]))
+        # Colors (type-coerced)
+        self.text_color = self._to_color(
+            self.feeds_config.get('text_color', [0, 255, 0]), (0, 255, 0)
+        )
+        self.symbol_color = self._to_color(
+            self.feeds_config.get('symbol_color', [255, 255, 0]), (255, 255, 0)
+        )
+        self.separator_color = self._to_color(
+            self.feeds_config.get('separator_color', [255, 0, 0]), (255, 0, 0)
+        )
 
         # Background service configuration
         self.background_config = self.global_config.get('background_service', {
@@ -77,19 +118,21 @@ class StockNewsTickerPlugin(BasePlugin):
         })
 
         # State
-        self.current_news_items = []
-        self.current_news_group = 0
-        self.scroll_position = 0
-        self.last_update = 0
-        self.all_news_items = []
-        self.current_rotation_index = 0
-        self.initialized = True
+        self.current_news_items: List[Dict[str, Any]] = []
+        self.last_update: float = 0
+        self.all_news_items: List[Dict[str, Any]] = []
+        self.initialized: bool = True
 
         # Derive font_size from the BDF font map (used for text layout)
         font_entry = self._BDF_FONT_MAP.get(self.font_name, ('10x20.bdf', 20))
-        self.font_size = font_entry[1]
+        self.font_size: int = font_entry[1]
 
-        # Register fonts
+        # Cached PIL fonts (loaded once, reused in display loop)
+        self._headline_font: Optional[ImageFont.ImageFont] = None
+        self._info_font: Optional[ImageFont.ImageFont] = None
+        self._load_fonts()
+
+        # Register fonts with font manager
         self._register_fonts()
 
         # Log configuration
@@ -132,7 +175,43 @@ class StockNewsTickerPlugin(BasePlugin):
         'marketwatch': 'https://feeds.marketwatch.com/marketwatch/topstories/',
     }
 
-    def _register_fonts(self):
+    def _load_fonts(self) -> None:
+        """Load and cache PIL fonts for display rendering.
+
+        Uses the BDF font specified by ``self.font_name`` for headlines
+        and a smaller BDF/TTF font for info text.  Falls back to PIL's
+        built-in default on any loading error.
+        """
+        # Headline / symbol font — load the selected BDF at native size
+        font_entry = self._BDF_FONT_MAP.get(self.font_name, ('10x20.bdf', 20))
+        bdf_filename, native_size = font_entry
+        for font_path in (f'assets/fonts/{bdf_filename}',
+                          'assets/fonts/10x20.bdf'):
+            try:
+                self._headline_font = ImageFont.truetype(font_path, native_size)
+                self.logger.debug(f"Loaded headline font: {font_path}")
+                break
+            except (OSError, IOError):
+                continue
+
+        if self._headline_font is None:
+            self._headline_font = ImageFont.load_default()
+            self.logger.warning("Using PIL default font for headlines")
+
+        # Info font (smaller, for source / timestamp)
+        for info_path in ('assets/fonts/6x10.bdf',
+                          'assets/fonts/4x6-font.ttf'):
+            try:
+                self._info_font = ImageFont.truetype(info_path, 10)
+                break
+            except (OSError, IOError):
+                continue
+
+        if self._info_font is None:
+            self._info_font = ImageFont.load_default()
+            self.logger.warning("Using PIL default font for info text")
+
+    def _register_fonts(self) -> None:
         """Register fonts with the font manager."""
         try:
             if not hasattr(self.plugin_manager, 'font_manager'):
@@ -180,7 +259,7 @@ class StockNewsTickerPlugin(BasePlugin):
             )
 
             self.logger.info("Stock news ticker fonts registered")
-        except Exception as e:
+        except (AttributeError, OSError, ValueError) as e:
             self.logger.warning(f"Error registering fonts: {e}")
 
     def update(self) -> None:
@@ -213,19 +292,15 @@ class StockNewsTickerPlugin(BasePlugin):
                 if custom_news:
                     self.all_news_items.extend(custom_news)
 
-            # Limit total news items and reset rotation tracking
+            # Limit total news items
             max_items = len(stock_symbols) * self.max_headlines_per_symbol + len(custom_feeds) * self.headlines_per_rotation
             if len(self.all_news_items) > max_items:
                 self.all_news_items = self.all_news_items[:max_items]
 
-            # Reset rotation tracking for new content
-            if self.all_news_items:
-                self.current_rotation_index = 0
-
             self.last_update = time.time()
             self.logger.debug(f"Updated stock news: {len(self.all_news_items)} total items")
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
             self.logger.error(f"Error updating stock news: {e}")
 
     def _fetch_stock_news(self, symbol: str) -> List[Dict]:
@@ -298,7 +373,7 @@ class StockNewsTickerPlugin(BasePlugin):
             self.logger.error("Error fetching %s news for %s: %s", source_label, symbol, e)
         except ET.ParseError as e:
             self.logger.error("Error parsing %s RSS for %s: %s", source_label, symbol, e)
-        except Exception as e:
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
             self.logger.error("Error processing %s news for %s: %s", source_label, symbol, e)
 
         return []
@@ -358,7 +433,7 @@ class StockNewsTickerPlugin(BasePlugin):
                 self.logger.error("Error fetching %s feed: %s", feed_label, e)
             except ET.ParseError as e:
                 self.logger.error("Error parsing %s feed: %s", feed_label, e)
-            except Exception as e:
+            except (KeyError, TypeError, ValueError, AttributeError) as e:
                 self.logger.error("Error processing %s feed: %s", feed_label, e)
 
         return all_items
@@ -415,7 +490,7 @@ class StockNewsTickerPlugin(BasePlugin):
         except ET.ParseError as e:
             self.logger.error(f"Error parsing RSS feed {feed_name}: {e}")
             return []
-        except Exception as e:
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
             self.logger.error(f"Error processing RSS feed {feed_name}: {e}")
             return []
 
@@ -448,6 +523,9 @@ class StockNewsTickerPlugin(BasePlugin):
             self._display_error("Stock news ticker plugin not initialized")
             return
 
+        if force_clear:
+            self.display_manager.clear()
+
         if not self.all_news_items:
             self._display_no_news()
             return
@@ -455,17 +533,18 @@ class StockNewsTickerPlugin(BasePlugin):
         # Display scrolling stock news
         self._display_scrolling_stock_news()
 
-    def _display_scrolling_stock_news(self):
+    def _display_scrolling_stock_news(self) -> None:
         """Display scrolling stock news headlines."""
         try:
             matrix_width = self.display_manager.matrix.width
             matrix_height = self.display_manager.matrix.height
+            font = self._headline_font
 
             # Create base image
             img = Image.new('RGB', (matrix_width, matrix_height), (0, 0, 0))
             draw = ImageDraw.Draw(img)
 
-            # For now, display first few news items (placeholder for scrolling implementation)
+            # Display first few news items (placeholder for full scrolling implementation)
             y_offset = 5
             max_items = min(3, len(self.all_news_items))
 
@@ -475,11 +554,6 @@ class StockNewsTickerPlugin(BasePlugin):
 
                 news_item = self.all_news_items[i]
 
-                # TODO: Implement scrolling ticker display
-                # TODO: Show symbol, headline, and source
-                # TODO: Use font manager for text rendering
-
-                # Simple placeholder display
                 symbol = news_item.get('symbol', news_item.get('feed_name', 'UNKNOWN'))
                 title = news_item.get('title', 'No title')
 
@@ -487,41 +561,41 @@ class StockNewsTickerPlugin(BasePlugin):
                 if len(title) > 25:
                     title = title[:22] + "..."
 
-                draw.text((5, y_offset), f"{symbol}:", fill=self.symbol_color)
-                draw.text((45, y_offset), title, fill=self.text_color)
+                draw.text((5, y_offset), f"{symbol}:", font=font, fill=self.symbol_color)
+                draw.text((45, y_offset), title, font=font, fill=self.text_color)
 
                 # Add separator between items
                 if i < max_items - 1:
                     separator_y = y_offset + self.font_size + 2
-                    draw.text((5, separator_y), "---", fill=self.separator_color)
+                    draw.text((5, separator_y), "---", font=font, fill=self.separator_color)
 
                 y_offset += self.font_size + 8
 
             self.display_manager.image = img.copy()
             self.display_manager.update_display()
 
-        except Exception as e:
+        except (OSError, TypeError, ValueError, AttributeError) as e:
             self.logger.error(f"Error displaying stock news: {e}")
             self._display_error("Display error")
 
-    def _display_no_news(self):
+    def _display_no_news(self) -> None:
         """Display message when no news is available."""
         img = Image.new('RGB', (self.display_manager.matrix.width,
                                self.display_manager.matrix.height),
                        (0, 0, 0))
         draw = ImageDraw.Draw(img)
-        draw.text((5, 12), "No Stock News", fill=(150, 150, 150))
+        draw.text((5, 12), "No Stock News", font=self._info_font, fill=(150, 150, 150))
 
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
 
-    def _display_error(self, message: str):
+    def _display_error(self, message: str) -> None:
         """Display error message."""
         img = Image.new('RGB', (self.display_manager.matrix.width,
                                self.display_manager.matrix.height),
                        (0, 0, 0))
         draw = ImageDraw.Draw(img)
-        draw.text((5, 12), message, fill=(255, 0, 0))
+        draw.text((5, 12), message, font=self._info_font, fill=(255, 0, 0))
 
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
@@ -561,23 +635,33 @@ class StockNewsTickerPlugin(BasePlugin):
         self.feeds_config = new_config.get('feeds', {})
         self.global_config = new_config.get('global', {})
 
-        # Display settings
-        self.display_duration = self.global_config.get('display_duration', 30)
-        self.scroll_speed = self.global_config.get('scroll_speed', 1)
-        self.scroll_delay = self.global_config.get('scroll_delay', 0.01)
-        self.dynamic_duration = self.global_config.get('dynamic_duration', True)
-        self.min_duration = self.global_config.get('min_duration', 30)
-        self.max_duration = self.global_config.get('max_duration', 300)
-        self.max_headlines_per_symbol = self.global_config.get('max_headlines_per_symbol', 1)
-        self.headlines_per_rotation = self.global_config.get('headlines_per_rotation', 2)
+        # Display settings (type-coerced)
+        self.display_duration = self._to_float(self.global_config.get('display_duration', 30), 30)
+        self.scroll_speed = self._to_float(self.global_config.get('scroll_speed', 1), 1)
+        self.scroll_delay = self._to_float(self.global_config.get('scroll_delay', 0.01), 0.01)
+        self.dynamic_duration = bool(self.global_config.get('dynamic_duration', True))
+        self.min_duration = self._to_float(self.global_config.get('min_duration', 30), 30)
+        self.max_duration = self._to_float(self.global_config.get('max_duration', 300), 300)
+        self.max_headlines_per_symbol = self._to_int(
+            self.global_config.get('max_headlines_per_symbol', 1), 1
+        )
+        self.headlines_per_rotation = self._to_int(
+            self.global_config.get('headlines_per_rotation', 2), 2
+        )
         self.font_name = self.global_config.get('font', '10x20')
         self.news_source = self.feeds_config.get('news_source', 'google_news')
         self.market_feeds = self.feeds_config.get('market_feeds', {})
 
-        # Colors
-        self.text_color = tuple(self.feeds_config.get('text_color', [0, 255, 0]))
-        self.symbol_color = tuple(self.feeds_config.get('symbol_color', [255, 255, 0]))
-        self.separator_color = tuple(self.feeds_config.get('separator_color', [255, 0, 0]))
+        # Colors (type-coerced)
+        self.text_color = self._to_color(
+            self.feeds_config.get('text_color', [0, 255, 0]), (0, 255, 0)
+        )
+        self.symbol_color = self._to_color(
+            self.feeds_config.get('symbol_color', [255, 255, 0]), (255, 255, 0)
+        )
+        self.separator_color = self._to_color(
+            self.feeds_config.get('separator_color', [255, 0, 0]), (255, 0, 0)
+        )
 
         # Background service
         self.background_config = self.global_config.get('background_service', {
@@ -587,9 +671,10 @@ class StockNewsTickerPlugin(BasePlugin):
             'priority': 2
         })
 
-        # Recalculate font size
+        # Recalculate font size and reload fonts
         font_entry = self._BDF_FONT_MAP.get(self.font_name, ('10x20.bdf', 20))
         self.font_size = font_entry[1]
+        self._load_fonts()
 
         # Re-register fonts with updated config
         self._register_fonts()
@@ -600,4 +685,6 @@ class StockNewsTickerPlugin(BasePlugin):
         """Cleanup resources."""
         self.all_news_items = []
         self.current_news_items = []
+        self._headline_font = None
+        self._info_font = None
         self.logger.info("Stock news ticker plugin cleaned up")
