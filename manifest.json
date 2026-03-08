@@ -12,6 +12,7 @@
   "branch": "main",
   "plugin_path": "plugins/stock-news",
   "min_ledmatrix_version": "2.0.0",
+  "compatible_versions": [">=2.0.0"],
   "update_interval": 3600,
   "default_duration": 30,
   "versions": [
