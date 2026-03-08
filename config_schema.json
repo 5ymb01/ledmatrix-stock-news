@@ -111,20 +111,6 @@
           "default": false,
           "description": "Enable scroll performance metrics"
         },
-        "max_headlines_per_symbol": {
-          "type": "integer",
-          "default": 1,
-          "minimum": 1,
-          "maximum": 5,
-          "description": "Maximum headlines to show per stock symbol"
-        },
-        "headlines_per_rotation": {
-          "type": "integer",
-          "default": 2,
-          "minimum": 1,
-          "maximum": 10,
-          "description": "Number of headlines to show per rotation"
-        },
         "font_size": {
           "type": "integer",
           "default": 10,
