@@ -32,6 +32,7 @@
     "stock_news_ticker"
   ],
   "dependencies": [
-    "requests"
+    "requests",
+    "Pillow"
   ]
 }

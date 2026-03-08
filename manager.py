@@ -138,14 +138,18 @@ class StockNewsTickerPlugin(BasePlugin):
         self.logger.info(f"Custom feeds: {custom_feeds}")
 
     def _load_fonts(self) -> None:
-        """Load and cache PIL fonts for display rendering."""
-        # Headline / symbol font – try TTF first, then BDF, then PIL default
+        """Load and cache PIL fonts for display rendering.
+
+        Only TTF/OTF fonts can be loaded via ImageFont.truetype().
+        BDF bitmap fonts require freetype (handled by the core font
+        manager) and are NOT compatible with this fallback chain.
+        """
+        # Headline / symbol font – try TTF fonts, then PIL default
         for font_path in ('assets/fonts/PressStart2P-Regular.ttf',
-                          'assets/fonts/5x7.bdf',
-                          'assets/fonts/4x6.bdf'):
+                          'assets/fonts/4x6-font.ttf'):
             try:
                 self._headline_font = ImageFont.truetype(font_path, self.font_size)
-                self.logger.debug(f"Loaded headline font: {font_path}")
+                self.logger.debug("Loaded headline font: %s", font_path)
                 break
             except (OSError, IOError):
                 continue
