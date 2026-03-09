@@ -21,6 +21,7 @@ import xml.etree.ElementTree as ET
 import html
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
@@ -143,12 +144,20 @@ class StockNewsTickerPlugin(BasePlugin):
         Only TTF/OTF fonts can be loaded via ImageFont.truetype().
         BDF bitmap fonts require freetype (handled by the core font
         manager) and are NOT compatible with this fallback chain.
+
+        Paths are resolved relative to the project root (two levels
+        above the installed plugin directory) so fonts load regardless
+        of the process working directory.
         """
-        # Headline / symbol font – try TTF fonts, then PIL default
-        for font_path in ('assets/fonts/PressStart2P-Regular.ttf',
-                          'assets/fonts/4x6-font.ttf'):
+        # Resolve project root: plugins/<id>/manager.py → project root
+        project_root = Path(__file__).resolve().parent.parent.parent
+        fonts_dir = project_root / 'assets' / 'fonts'
+
+        # Headline / symbol font - try TTF fonts, then PIL default
+        for font_name in ('PressStart2P-Regular.ttf', '4x6-font.ttf'):
+            font_path = fonts_dir / font_name
             try:
-                self._headline_font = ImageFont.truetype(font_path, self.font_size)
+                self._headline_font = ImageFont.truetype(str(font_path), self.font_size)
                 self.logger.debug("Loaded headline font: %s", font_path)
                 break
             except (OSError, IOError):
@@ -160,7 +169,7 @@ class StockNewsTickerPlugin(BasePlugin):
 
         # Info font (smaller, for source / timestamp)
         try:
-            self._info_font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
+            self._info_font = ImageFont.truetype(str(fonts_dir / '4x6-font.ttf'), 8)
         except (OSError, IOError):
             self._info_font = ImageFont.load_default()
             self.logger.warning("Using PIL default font for info text")
