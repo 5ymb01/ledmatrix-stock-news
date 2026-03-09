@@ -11,12 +11,14 @@
   "repo": "https://github.com/ChuckBuilds/ledmatrix-plugins",
   "branch": "main",
   "plugin_path": "plugins/stock-news",
+  "min_ledmatrix_version": "2.0.0",
+  "compatible_versions": [">=2.0.0"],
+  "update_interval": 3600,
+  "default_duration": 30,
   "versions": [
     {
       "version": "1.0.1",
-      "ledmatrix_min": "2.0.0",
-      "released": "2025-10-12",
-      "download_url": "https://github.com/ChuckBuilds/ledmatrix-plugins/archive/refs/heads/main.zip"
+      "released": "2025-10-12"
     }
   ],
   "stars": 0,
@@ -27,9 +29,8 @@
   "display_modes": [
     "stock_news_ticker"
   ],
-  "dependencies": {
-    "managers": [
-      "cache_manager"
-    ]
-  }
+  "dependencies": [
+    "requests",
+    "Pillow"
+  ]
 }
