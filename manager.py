@@ -84,10 +84,6 @@ class StockNewsTickerPlugin(BasePlugin):
         # Display settings (type-coerced)
         self.display_duration = self._to_float(self.global_config.get('display_duration', 30), 30)
         self.scroll_speed = self._to_float(self.global_config.get('scroll_speed', 1), 1)
-        self.scroll_delay = self._to_float(self.global_config.get('scroll_delay', 0.01), 0.01)
-        self.dynamic_duration = bool(self.global_config.get('dynamic_duration', True))
-        self.min_duration = self._to_float(self.global_config.get('min_duration', 30), 30)
-        self.max_duration = self._to_float(self.global_config.get('max_duration', 300), 300)
         self.max_headlines_per_symbol = self._to_int(
             self.global_config.get('max_headlines_per_symbol', 1), 1
         )
@@ -118,7 +114,6 @@ class StockNewsTickerPlugin(BasePlugin):
         })
 
         # State
-        self.current_news_items: List[Dict[str, Any]] = []
         self.last_update: float = 0
         self.all_news_items: List[Dict[str, Any]] = []
         self.initialized: bool = True
@@ -268,7 +263,6 @@ class StockNewsTickerPlugin(BasePlugin):
             return
 
         try:
-            self.current_news_items = []
             self.all_news_items = []
 
             # Get stock symbols to track
@@ -288,6 +282,9 @@ class StockNewsTickerPlugin(BasePlugin):
             # Fetch from custom feeds
             custom_feeds = self.feeds_config.get('custom_feeds', {})
             for feed_name, feed_url in custom_feeds.items():
+                if not feed_url.startswith(('http://', 'https://')):
+                    self.logger.warning(f"Skipping feed with invalid URL scheme: {feed_name}")
+                    continue
                 custom_news = self._fetch_feed_headlines(feed_name, feed_url)
                 if custom_news:
                     self.all_news_items.extend(custom_news)
@@ -640,10 +637,6 @@ class StockNewsTickerPlugin(BasePlugin):
         # Display settings (type-coerced)
         self.display_duration = self._to_float(self.global_config.get('display_duration', 30), 30)
         self.scroll_speed = self._to_float(self.global_config.get('scroll_speed', 1), 1)
-        self.scroll_delay = self._to_float(self.global_config.get('scroll_delay', 0.01), 0.01)
-        self.dynamic_duration = bool(self.global_config.get('dynamic_duration', True))
-        self.min_duration = self._to_float(self.global_config.get('min_duration', 30), 30)
-        self.max_duration = self._to_float(self.global_config.get('max_duration', 300), 300)
         self.max_headlines_per_symbol = self._to_int(
             self.global_config.get('max_headlines_per_symbol', 1), 1
         )
@@ -686,7 +679,6 @@ class StockNewsTickerPlugin(BasePlugin):
     def cleanup(self) -> None:
         """Cleanup resources."""
         self.all_news_items = []
-        self.current_news_items = []
         self._headline_font = None
         self._info_font = None
         self.logger.info("Stock news ticker plugin cleaned up")

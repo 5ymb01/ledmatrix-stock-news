@@ -9,6 +9,11 @@
       "default": false,
       "description": "Enable or disable the stock news ticker plugin"
     },
+    "live_priority": {
+      "type": "boolean",
+      "description": "Take over display when live market news is available",
+      "default": false
+    },
     "global": {
       "type": "object",
       "properties": {
