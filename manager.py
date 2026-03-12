@@ -304,6 +304,7 @@ class StockNewsTickerPlugin(BasePlugin):
             self.logger.error(f"Error updating stock news: {e}")
 
     def _fetch_stock_news(self, symbol: str) -> List[Dict]:
+
         """Fetch news for a stock symbol from the configured RSS source.
 
         Routes to the appropriate RSS provider based on ``self.news_source``.
@@ -441,6 +442,7 @@ class StockNewsTickerPlugin(BasePlugin):
     def _fetch_feed_headlines(self, feed_name: str, feed_url: str) -> List[Dict]:
         """Fetch headlines from a custom RSS feed."""
         cache_key = f"stock_feed_{feed_name}_{datetime.now().strftime('%Y%m%d%H')}"
+
         update_interval = self.global_config.get('update_interval', 300)
 
         # Check cache first
