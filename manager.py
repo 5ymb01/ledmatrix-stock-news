@@ -183,7 +183,10 @@ class StockNewsTickerPlugin(BasePlugin):
         for font_path in (f'assets/fonts/{bdf_filename}',
                           'assets/fonts/10x20.bdf'):
             try:
-                self._headline_font = ImageFont.truetype(font_path, native_size)
+                if font_path.endswith('.bdf'):
+                    self._headline_font = ImageFont.load(font_path)
+                else:
+                    self._headline_font = ImageFont.truetype(font_path, native_size)
                 self.logger.debug(f"Loaded headline font: {font_path}")
                 break
             except (OSError, IOError):
@@ -197,7 +200,10 @@ class StockNewsTickerPlugin(BasePlugin):
         for info_path in ('assets/fonts/6x10.bdf',
                           'assets/fonts/4x6-font.ttf'):
             try:
-                self._info_font = ImageFont.truetype(info_path, 10)
+                if info_path.endswith('.bdf'):
+                    self._info_font = ImageFont.load(info_path)
+                else:
+                    self._info_font = ImageFont.truetype(info_path, 10)
                 break
             except (OSError, IOError):
                 continue
