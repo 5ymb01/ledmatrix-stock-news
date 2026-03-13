@@ -1,0 +1,40 @@
+# CodeRabbit configuration for 5ymb01/ledmatrix-stock-news
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+      - "master"
+      - "Dev"
+
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        - Plugin must inherit from BasePlugin and implement update() + display(force_clear=False)
+        - Use `self.display_manager.matrix.width/height` not hardcoded dimensions
+        - Use `get_logger()` from `src.logging_config`, not `logging.getLogger()`
+        - Enforce specific exception types (never bare `except:`)
+        - Cache expensive resources (fonts, images) as instance variables
+        - Validate URL schemes for custom feeds (http/https only)
+        - No `print()` — use self.logger
+    - path: "config_schema.json"
+      instructions: |
+        - Must include `enabled`, `display_duration`, `live_priority` properties
+        - Use JSON Schema Draft-7 with proper types, defaults, and constraints
+
+  path_filters:
+    - "!**/__pycache__/**"
+    - "!**/*.pyc"
+
+chat:
+  auto_reply: true
