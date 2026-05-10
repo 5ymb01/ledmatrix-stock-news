@@ -1,18 +1,29 @@
 {
   "id": "stock-news",
   "name": "Stock News Ticker",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "entry_point": "manager.py",
   "class_name": "StockNewsTickerPlugin",
   "description": "Displays scrolling stock-specific news headlines and financial updates from RSS feeds, focused on market news and company updates",
   "author": "ChuckBuilds",
   "category": "financial",
-  "tags": ["stock", "news", "financial", "market", "ticker", "headlines", "rss", "scrolling"],
+  "tags": [
+    "stock",
+    "news",
+    "financial",
+    "market",
+    "ticker",
+    "headlines",
+    "rss",
+    "scrolling"
+  ],
   "repo": "https://github.com/ChuckBuilds/ledmatrix-plugins",
   "branch": "main",
   "plugin_path": "plugins/stock-news",
   "min_ledmatrix_version": "2.0.0",
-  "compatible_versions": [">=2.0.0"],
+  "compatible_versions": [
+    ">=2.0.0"
+  ],
   "update_interval": 3600,
   "default_duration": 30,
   "versions": [

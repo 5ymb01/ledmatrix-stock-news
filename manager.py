@@ -79,6 +79,14 @@ class StockNewsTickerPlugin(BasePlugin):
         """Initialize the stock news ticker plugin."""
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
 
+        # Tell the DisplayController this plugin needs the high-FPS scroll
+        # loop instead of the default 1 Hz tick. Without this flag,
+        # display() is only called once per second, which makes 30 px/s
+        # scrolling jump 30 pixels per frame (visible as severe judder).
+        # ScrollHelper alone isn't enough — the framework gates high-FPS
+        # purely on this attribute being True.
+        self.enable_scrolling = True
+
         # Configuration
         self.feeds_config = config.get('feeds', {})
         self.global_config = config.get('global', {})
